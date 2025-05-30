@@ -1,6 +1,12 @@
+# config.yml
 version: 1
-validation: sovereign
-accounts: 
+build:
+  proto:
+    path: proto
+    third_party_paths:
+    - third_party/proto
+    - proto_vendor
+accounts:
 - name: alice
   coins:
   - 20000token
@@ -17,12 +23,8 @@ faucet:
   coins:
   - 5token
   - 100000stake
+genesis:
+  chain_id: "test"  # 🎯 ĐÂY LÀ CHAIN_ID CẦN CHECK
 validators:
 - name: alice
   bonded: 100000000stake
-- name: validator1
-  bonded: 100000000stake
-- name: validator2
-  bonded: 200000000stake
-- name: validator3
-  bonded: 300000000stake

@@ -1,0 +1,8 @@
+{
+  "dependencies": {
+    "@cosmjs/encoding": "^0.33.1",
+    "@cosmjs/proto-signing": "^0.33.1",
+    "@cosmjs/stargate": "^0.33.1",
+    "bip39": "^3.1.0"
+  }
+}
