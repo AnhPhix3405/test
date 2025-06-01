@@ -1,0 +1,16 @@
+syntax = "proto3";
+package test.identity;
+
+option go_package = "github.com/AnhPhix3405/test/x/identity/types";
+
+message Identity {
+  uint64 id = 1;
+  string fullName = 2; 
+  string dateOfBirth = 3; 
+  string nationalIdHash = 4; 
+  bool isVerified = 5; 
+  string verifiedBy = 6; 
+  int32 createdAt = 7; 
+  int32 verifiedAt = 8; 
+  string creator = 9;
+}

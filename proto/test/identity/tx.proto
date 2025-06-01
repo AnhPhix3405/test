@@ -1,0 +1,98 @@
+syntax = "proto3";
+
+package test.identity;
+
+import "amino/amino.proto";
+import "cosmos/msg/v1/msg.proto";
+import "cosmos_proto/cosmos.proto";
+import "gogoproto/gogo.proto";
+import "test/identity/params.proto";
+import "test/identity/identity.proto";
+
+option go_package = "github.com/AnhPhix3405/test/x/identity/types";
+
+service Msg {
+  option (cosmos.msg.v1.service) = true;
+  
+  rpc UpdateParams     (MsgUpdateParams    ) returns (MsgUpdateParamsResponse    );
+  rpc CreateIdentity   (MsgCreateIdentity  ) returns (MsgCreateIdentityResponse  );
+  rpc UpdateIdentity   (MsgUpdateIdentity  ) returns (MsgUpdateIdentityResponse  );
+  rpc DeleteIdentity   (MsgDeleteIdentity  ) returns (MsgDeleteIdentityResponse  );
+  rpc RegisterIdentity (MsgRegisterIdentity) returns (MsgRegisterIdentityResponse);
+  rpc VerifyIdentity   (MsgVerifyIdentity  ) returns (MsgVerifyIdentityResponse  );
+}
+
+// Định nghĩa các message...
+message MsgRegisterIdentity {
+  option (cosmos.msg.v1.signer) = "creator";
+  string creator     = 1;
+  string fullName    = 2;
+  string dateOfBirth = 3;
+  string nationalId  = 4;
+}
+
+message MsgRegisterIdentityResponse {}
+
+message MsgVerifyIdentity {
+  option (cosmos.msg.v1.signer) = "creator";
+  string creator    = 1;
+  uint64 identityId = 2;
+  bool   approve    = 3;
+}
+
+message MsgVerifyIdentityResponse {}
+
+message MsgCreateIdentity {
+  option (cosmos.msg.v1.signer) = "creator";
+  string creator        = 1;
+  string fullName       = 2;
+  string dateOfBirth    = 3;
+  string nationalIdHash = 4;
+  bool   isVerified     = 5;
+  string verifiedBy     = 6;
+  int32  createdAt      = 7;
+  int32  verifiedAt     = 8;
+}
+
+message MsgCreateIdentityResponse {
+  uint64 id = 1;
+}
+
+// ...existing code...
+message MsgUpdateIdentity {
+  option (cosmos.msg.v1.signer) = "creator";
+  string creator        = 1;
+  uint64 id             = 2;
+  string fullName       = 3;
+  string dateOfBirth    = 4;
+  string nationalIdHash = 5;
+  bool   isVerified     = 6;
+  string verifiedBy     = 7;
+  int32  createdAt      = 8;
+  int32  verifiedAt     = 9;
+}
+
+message MsgUpdateIdentityResponse {}
+
+message MsgDeleteIdentity {
+  option (cosmos.msg.v1.signer) = "creator";
+  string creator = 1;
+  uint64 id      = 2;
+}
+
+message MsgDeleteIdentityResponse {}
+
+// Add the missing MsgUpdateParams messages
+message MsgUpdateParams {
+  option (cosmos.msg.v1.signer) = "authority";
+  
+  // authority is the address that controls the module (defaults to x/gov unless overwritten).
+  string authority = 1 [(cosmos_proto.scalar) = "cosmos.AddressString"];
+  
+  // params defines the module parameters to update.
+  
+  // NOTE: All parameters must be supplied.
+  Params params = 2 [(gogoproto.nullable) = false, (amino.dont_omitempty) = true];
+}
+
+message MsgUpdateParamsResponse {}

@@ -22,7 +22,7 @@ faucet:
   name: bob
   coins:
   - 5token
-  - 100000stake
+  - 50000000stake
 genesis:
   chain_id: "test"  # 🎯 ĐÂY LÀ CHAIN_ID CẦN CHECK
 validators:

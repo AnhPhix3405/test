@@ -3,30 +3,83 @@ import { useWalletContext } from "../def-hooks/walletContext";
 import { usePhiWallet } from "../hooks/usePhiWallet";
 import { IgntButton, IgntModal, IgntCard } from "@ignt/react-library";
 import { BLOCKCHAIN_CONFIG } from "../config/blockchain";
-import TransactionHistory from "../components/TransactionHistory"; // 🆕 New import
+import TransactionHistory from "../components/TransactionHistory";
+
 export default function WalletView() {
   const { activeWallet } = useWalletContext();
   const phiWallet = usePhiWallet();
   const [showMnemonic, setShowMnemonic] = useState(false);
   const [balance, setBalance] = useState<any>(null);
   const [loading, setLoading] = useState(false);
+  const [connectionStatus, setConnectionStatus] = useState('disconnected'); // 🆕 Add connection status
 
-  // Get balance when component mounts
+  // 🆕 Auto-connect phiWallet when activeWallet is available
   useEffect(() => {
-    if (activeWallet?.accounts[0]?.address) {
-      loadBalance();
-    }
-  }, [activeWallet]);
+    const connectPhiWallet = async () => {
+      if (activeWallet && !phiWallet.isConnected) {
+        console.log("🔄 Auto-connecting phiWallet in WalletView...");
+        setConnectionStatus('connecting');
+        try {
+          await phiWallet.importWallet(activeWallet.mnemonic);
+          console.log("✅ PhiWallet connected successfully in WalletView!");
+          setConnectionStatus('connected');
+          
+          // Load balance after successful connection
+          await loadBalance();
+        } catch (error) {
+          console.error("❌ Failed to connect phiWallet in WalletView:", error);
+          setConnectionStatus('failed');
+        }
+      } else if (activeWallet && phiWallet.isConnected) {
+        setConnectionStatus('connected');
+        loadBalance();
+      }
+    };
+
+    connectPhiWallet();
+  }, [activeWallet, phiWallet.isConnected]);
 
   const loadBalance = async () => {
+    if (!activeWallet?.accounts[0]?.address) return;
+    if (!phiWallet.isConnected || !phiWallet.client) {
+      console.warn("⚠️ PhiWallet not connected, skipping balance load");
+      return;
+    }
+    
+    setLoading(true);
+    try {
+      console.log("💰 Loading balance for:", activeWallet.accounts[0].address);
+      const balanceData = await phiWallet.getBalance(activeWallet.accounts[0].address);
+      setBalance(balanceData);
+      console.log("✅ Balance loaded:", balanceData);
+    } catch (error) {
+      console.error("❌ Failed to load balance:", error);
+      setBalance({ 
+        amount: "0",
+        denom: BLOCKCHAIN_CONFIG.currency.coinMinimalDenom, 
+        readable: `0 ${BLOCKCHAIN_CONFIG.currency.coinDenom}`,
+      });
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  // 🆕 Add faucet request function
+  const handleRequestFaucet = async () => {
     if (!activeWallet?.accounts[0]?.address) return;
     
     setLoading(true);
     try {
-      const balanceData = await phiWallet.getBalance(activeWallet.accounts[0].address);
-      setBalance(balanceData);
+      console.log("🚰 Requesting faucet for:", activeWallet.accounts[0].address);
+      await phiWallet.requestFaucet(activeWallet.accounts[0].address);
+      console.log("✅ Faucet request successful");
+      
+      // Wait a bit then refresh balance
+      setTimeout(() => {
+        loadBalance();
+      }, 3000);
     } catch (error) {
-      console.error("Failed to load balance:", error);
+      console.error("❌ Faucet request failed:", error);
     } finally {
       setLoading(false);
     }
@@ -48,6 +101,36 @@ export default function WalletView() {
       <div className="max-w-4xl mx-auto">
         <h1 className="text-3xl font-bold mb-8">Wallet Information</h1>
         
+        {/* 🆕 Connection Status Indicator */}
+        <div className="mb-4">
+          {connectionStatus === 'connecting' && (
+            <div className="bg-yellow-50 border border-yellow-200 rounded-lg p-3">
+              <div className="flex items-center">
+                <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-yellow-600 mr-2"></div>
+                <span className="text-yellow-700">Connecting to blockchain...</span>
+              </div>
+            </div>
+          )}
+          {connectionStatus === 'failed' && (
+            <div className="bg-red-50 border border-red-200 rounded-lg p-3">
+              <div className="flex items-center justify-between">
+                <span className="text-red-700">❌ Failed to connect to blockchain</span>
+                <IgntButton 
+                  type="secondary" 
+                  onClick={() => window.location.reload()}
+                  className="text-sm"
+                >
+                  Retry
+                </IgntButton>
+              </div>
+            </div>
+          )}
+          {connectionStatus === 'connected' && (
+            <div className="bg-green-50 border border-green-200 rounded-lg p-3">
+              <span className="text-green-700">✅ Connected to {BLOCKCHAIN_CONFIG.chainName}</span>
+            </div>
+          )}
+        </div>
         
         {/* Wallet Overview */}
         <IgntCard className="mb-6">
@@ -58,7 +141,7 @@ export default function WalletView() {
                   Φ
                 </div>
                 <div>
-                  <h2 className="text-xl font-semibold">{activeWallet.name}</h2>
+                  <h2 className="text-xl font-semibold">{activeWallet.name || "Phi Wallet"}</h2>
                   <p className="text-gray-500">Test Chain Wallet</p>
                 </div>
               </div>
@@ -89,16 +172,34 @@ export default function WalletView() {
                     <div className="text-gray-400">Unable to load balance</div>
                   )}
                 </div>
-                <IgntButton type="secondary" onClick={loadBalance} disabled={loading}>
-                  Refresh
-                </IgntButton>
+                <div className="flex space-x-2">
+                  {/* 🆕 Add Faucet button */}
+                  <IgntButton 
+                    type="primary" 
+                    onClick={handleRequestFaucet} 
+                    disabled={loading || connectionStatus !== 'connected'}
+                    className="text-sm"
+                  >
+                    🚰 Faucet
+                  </IgntButton>
+                  <IgntButton 
+                    type="secondary" 
+                    onClick={loadBalance} 
+                    disabled={loading || connectionStatus !== 'connected'}
+                  >
+                    Refresh
+                  </IgntButton>
+                </div>
               </div>
             </div>
 
-            {/* Prefix */}
-            <div className="mb-4">
-              <div className="text-sm font-medium text-gray-500 mb-2">Address Prefix</div>
-              <div className="font-medium">{activeWallet.prefix}</div>
+            {/* 🆕 Debug Info (removable in production) */}
+            <div className="mt-4 p-3 bg-gray-50 rounded-lg text-xs">
+              <div><strong>Debug Info:</strong></div>
+              <div>Connection: {connectionStatus}</div>
+              <div>PhiWallet Connected: {phiWallet.isConnected ? 'Yes' : 'No'}</div>
+              <div>Client Available: {phiWallet.client ? 'Yes' : 'No'}</div>
+              <div>Address: {activeWallet.accounts[0]?.address}</div>
             </div>
           </div>
         </IgntCard>

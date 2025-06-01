@@ -1,7 +1,7 @@
 import { useState } from "react";
 import { useClient } from "./useClient";
 import { createNewWallet, importWalletFromMnemonic, validateMnemonic } from "../wallet";
-import { coin } from "@cosmjs/stargate";
+import { coin, GasPrice } from "@cosmjs/stargate";
 import { BLOCKCHAIN_CONFIG } from "../config/blockchain";
 
 export const usePhiWallet = () => {
@@ -66,77 +66,91 @@ export const usePhiWallet = () => {
     }
   };
 
-  const getBalance = async (address: string) => {
-    try {
-      console.log("💰 Getting balance for:", address);
-      
-      const balance = await client.getBalance(address);
-      
-      // Convert to readable format
-      const readableBalance = {
-        amount: balance.amount,
-        denom: balance.denom,
-        readable: `${(parseInt(balance.amount) / Math.pow(10, BLOCKCHAIN_CONFIG.currency.coinDecimals)).toFixed(6)} ${BLOCKCHAIN_CONFIG.currency.coinDenom}`,
-      };
-      
-      console.log("💎 Balance:", readableBalance);
-      return readableBalance;
-    } catch (error) {
-      console.error("❌ Failed to get balance:", error);
-      return { 
-        amount: "0",
-        denom: BLOCKCHAIN_CONFIG.currency.coinMinimalDenom, 
-        readable: `0 ${BLOCKCHAIN_CONFIG.currency.coinDenom}`,
-      };
+const getBalance = async (address: string) => {
+  try {
+    console.log("💰 Getting balance for:", address);
+    
+    // 🆕 CHECK CLIENT STATUS
+    if (!client.client) {
+      console.warn("⚠️ Client not connected, attempting to reconnect...");
+      throw new Error("Wallet not connected to blockchain. Please connect your wallet first.");
     }
-  };
+    
+    const balance = await client.getBalance(address);
+    
+    // Convert to readable format
+    const readableBalance = {
+      amount: balance.amount,
+      denom: balance.denom,
+      readable: `${(parseInt(balance.amount) / Math.pow(10, BLOCKCHAIN_CONFIG.currency.coinDecimals)).toFixed(6)} ${BLOCKCHAIN_CONFIG.currency.coinDenom}`,
+    };
+    
+    console.log("💎 Balance:", readableBalance);
+    return readableBalance;
+  } catch (error) {
+    console.error("❌ Failed to get balance:", error);
+    return { 
+      amount: "0",
+      denom: BLOCKCHAIN_CONFIG.currency.coinMinimalDenom, 
+      readable: `0 ${BLOCKCHAIN_CONFIG.currency.coinDenom}`,
+    };
+  }
+};
 
   const sendTokens = async (toAddress: string, amount: string, memo?: string) => {
-    try {
-      if (!client.client || !client.signer) {
-        throw new Error("Wallet not connected to Test Chain");
-      }
-
-      console.log("💸 Sending PHI tokens...");
-      console.log("📍 To:", toAddress);
-      console.log("💰 Amount:", amount, BLOCKCHAIN_CONFIG.currency.coinMinimalDenom);
-      console.log("📝 Memo:", memo || "No memo");
-
-      const accounts = await client.signer.getAccounts();
-      const fromAddress = accounts[0].address;
-
-      // Convert amount to micro units (uphi)
-      const microAmount = (parseFloat(amount) * Math.pow(10, BLOCKCHAIN_CONFIG.currency.coinDecimals)).toString();
-      const sendAmount = coin(microAmount, BLOCKCHAIN_CONFIG.currency.coinMinimalDenom);
-      
-      console.log("🔄 Transaction details:");
-      console.log("  From:", fromAddress);
-      console.log("  To:", toAddress);
-      console.log("  Amount:", sendAmount);
-      
-      const result = await client.client.sendTokens(
-        fromAddress,
-        toAddress,
-        [sendAmount],
-        "auto", // Let the client calculate gas
-        memo
-      );
-
-      console.log("✅ Transaction successful!");
-      console.log("🔗 TX Hash:", result.transactionHash);
-      console.log("⛽ Gas used:", result.gasUsed);
-      console.log("💸 Gas wanted:", result.gasWanted);
-      
-      return {
-        ...result,
-        explorerUrl: `${BLOCKCHAIN_CONFIG.explorerUrl}/tx/${result.transactionHash}`,
-      };
-    } catch (error: any) {
-      console.error("❌ Transaction failed:", error);
-      setError(error.message);
-      throw error;
+  try {
+    if (!client.client || !client.signer) {
+      throw new Error("Wallet not connected to Test Chain");
     }
-  };
+
+    console.log("💸 Sending PHI tokens...");
+    console.log("📍 To:", toAddress);
+    console.log("💰 Amount:", amount, BLOCKCHAIN_CONFIG.currency.coinMinimalDenom);
+    console.log("📝 Memo:", memo || "No memo");
+
+    const accounts = await client.signer.getAccounts();
+    const fromAddress = accounts[0].address;
+
+    // Convert amount to micro units
+    const microAmount = (parseFloat(amount) * Math.pow(10, BLOCKCHAIN_CONFIG.currency.coinDecimals)).toString();
+    const sendAmount = coin(microAmount, BLOCKCHAIN_CONFIG.currency.coinMinimalDenom);
+
+    // 🆕 Proper gas price configuration
+    const gasPrice = GasPrice.fromString(`0.025${BLOCKCHAIN_CONFIG.currency.coinMinimalDenom}`);
+    
+    console.log("🔄 Transaction details:");
+    console.log("  From:", fromAddress);
+    console.log("  To:", toAddress);
+    console.log("  Amount:", sendAmount);
+    console.log("  Gas Price:", gasPrice);
+    
+    // 🆕 Use explicit gas configuration instead of "auto"
+    const result = await client.client.sendTokens(
+      fromAddress,
+      toAddress,
+      [sendAmount],
+      {
+        amount: [coin("5000", BLOCKCHAIN_CONFIG.currency.coinMinimalDenom)], // Fixed fee
+        gas: "200000", // Fixed gas limit
+      },
+      memo
+    );
+
+    console.log("✅ Transaction successful!");
+    console.log("🔗 TX Hash:", result.transactionHash);
+    console.log("⛽ Gas used:", result.gasUsed);
+    console.log("💸 Gas wanted:", result.gasWanted);
+    
+    return {
+      ...result,
+      explorerUrl: `${BLOCKCHAIN_CONFIG.explorerUrl}/tx/${result.transactionHash}`,
+    };
+  } catch (error: any) {
+    console.error("❌ Transaction failed:", error);
+    setError(error.message);
+    throw error;
+  }
+};
 
 const getTransactionHistory = async (address: string, limit = 10) => {
   try {
@@ -177,6 +191,7 @@ const getTransactionHistory = async (address: string, limit = 10) => {
     
     // Method 4: Return mock data for development
     console.log("ℹ️ No real transactions found, returning mock data");
+    // console.log("🔧 Blockchain config:", BLOCKCHAIN_CONFIG.currency);
     return getMockTransactions(address);
     
   } catch (error) {
