@@ -70,10 +70,25 @@ const getBalance = async (address: string) => {
   try {
     console.log("💰 Getting balance for:", address);
     
-    // 🆕 CHECK CLIENT STATUS
+    // 🆕 Enhanced client check with retry logic
     if (!client.client) {
       console.warn("⚠️ Client not connected, attempting to reconnect...");
-      throw new Error("Wallet not connected to blockchain. Please connect your wallet first.");
+      
+      // Try to reconnect if we have active wallet
+      const activeWalletData = localStorage.getItem('activeWallet');
+      if (activeWalletData) {
+        try {
+          const wallet = JSON.parse(activeWalletData);
+          await importWallet(wallet.mnemonic);
+        } catch (reconnectError) {
+          console.error("❌ Failed to reconnect:", reconnectError);
+        }
+      }
+      
+      // If still no client, throw error
+      if (!client.client) {
+        throw new Error("Wallet not connected to blockchain. Please connect your wallet first.");
+      }
     }
     
     const balance = await client.getBalance(address);

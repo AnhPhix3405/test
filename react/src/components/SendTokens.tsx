@@ -57,6 +57,27 @@ const SendTokens: React.FC<SendTokensProps> = ({
     ensureConnection();
   }, [activeWallet, phiWallet.isConnected, phiWallet.client]);
 
+  // 🆕 ADD THIS NEW useEffect HERE - Connection stability check
+  useEffect(() => {
+    const checkConnectionStability = async () => {
+      if (activeWallet && connectionStatus === 'connected') {
+        // Verify connection is actually working
+        try {
+          await phiWallet.getBalance(activeWallet.accounts[0]?.address);
+          console.log("✅ Connection verified working");
+        } catch (error) {
+          console.warn("⚠️ Connection appears unstable, will retry on next action");
+          setConnectionStatus('unstable');
+        }
+      }
+    };
+
+    // Check connection stability after a short delay
+    const timeoutId = setTimeout(checkConnectionStability, 2000);
+    
+    return () => clearTimeout(timeoutId);
+  }, [activeWallet, connectionStatus, phiWallet]);
+
   // 🆕 Enhanced connection check
   const isConnected = !!(
     activeWallet && 
@@ -71,14 +92,27 @@ const SendTokens: React.FC<SendTokensProps> = ({
     setSuccess(null);
 
     try {
-      // 🆕 Double-check connection before proceeding
+      // 🆕 Enhanced connection verification with retry
       if (!isConnected) {
-        throw new Error("Wallet not connected to blockchain. Please wait for connection or refresh the page.");
+        // Try one more connection attempt
+        console.log("🔄 Attempting reconnection...");
+        setConnectionStatus('connecting');
+        
+        try {
+          await phiWallet.importWallet(activeWallet.mnemonic);
+          setConnectionStatus('connected');
+          
+          // Small delay to ensure connection is stable
+          await new Promise(resolve => setTimeout(resolve, 500));
+        } catch (reconnectError) {
+          console.error("❌ Reconnection failed:", reconnectError);
+          throw new Error("Wallet not connected to blockchain. Please refresh the page and try again.");
+        }
       }
 
-      // 🆕 Extra safety check
+      // 🆕 Final safety check with detailed error info
       if (!phiWallet.client) {
-        console.error("❌ Client not available even though isConnected=true");
+        console.error("❌ Client not available even after reconnection attempt");
         console.error("Debug info:", {
           activeWallet: !!activeWallet,
           phiWalletConnected: phiWallet.isConnected,
@@ -108,8 +142,28 @@ const SendTokens: React.FC<SendTokensProps> = ({
         connectionStatus
       });
       
-      // Check balance before sending
-      const balance = await phiWallet.getBalance(senderAddress);
+      // 🆕 Enhanced balance check with retry
+      let balance;
+      let retryCount = 0;
+      const maxRetries = 3;
+      
+      while (retryCount < maxRetries) {
+        try {
+          balance = await phiWallet.getBalance(senderAddress);
+          break; // Success, exit retry loop
+        } catch (balanceError) {
+          retryCount++;
+          console.warn(`⚠️ Balance check failed (attempt ${retryCount}/${maxRetries}):`, balanceError);
+          
+          if (retryCount === maxRetries) {
+            throw new Error("Unable to check balance. Please try again.");
+          }
+          
+          // Wait before retry
+          await new Promise(resolve => setTimeout(resolve, 1000));
+        }
+      }
+      
       const sendAmount = parseFloat(amount);
       const availableAmount = parseFloat(balance.amount) / Math.pow(10, phiWallet.config.currency.coinDecimals);
 

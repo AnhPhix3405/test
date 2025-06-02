@@ -89,13 +89,16 @@ export const useClient = () => {
   // 🔧 ENHANCED: Mock-friendly getBalance
   const getBalance = async (address: string) => {
     try {
-      if (!readOnlyClient) {
-        await connectReadOnly();
+      // 🆕 Ensure readOnlyClient is connected before using
+      let client = readOnlyClient;
+      if (!client) {
+        console.log("🔄 ReadOnly client not available, connecting...");
+        client = await connectReadOnly();
       }
       
       console.log("💰 Getting balance for:", address);
       
-      const balance = await readOnlyClient!.getBalance(
+      const balance = await client.getBalance(
         address, 
         env.currency.coinMinimalDenom
       );
