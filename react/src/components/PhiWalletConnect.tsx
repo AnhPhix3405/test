@@ -8,13 +8,17 @@ import {
   IgntSpinner,
 } from "@ignt/react-library";
 
+// 🆕 Import both components
+import CreateWallet from "./CreateWallet";
+import ImportWallet from "./ImportWallet";
+
 interface State {
-  modalPage: "connect" | "create" | "import" | "creating" | "importing" | "success" | "error";
+  modalPage: "connect" | "success" | "error";
   showModal: boolean;
-  importMnemonic: string;
-  newWalletData: { address: string; mnemonic: string } | null;
   errorMessage: string;
-  showMnemonic: boolean;
+  // 🆕 Add flags for both components
+  showCreateWallet: boolean;
+  showImportWallet: boolean;
 }
 
 export default function PhiWalletConnect() {
@@ -25,59 +29,65 @@ export default function PhiWalletConnect() {
   const [state, setState] = useState<State>({
     modalPage: "connect",
     showModal: false,
-    importMnemonic: "",
-    newWalletData: null,
     errorMessage: "",
-    showMnemonic: false,
+    showCreateWallet: false,
+    showImportWallet: false, // 🆕 Add this
   });
 
-  const handleCreateWallet = async () => {
-    try {
-      setState(prev => ({ ...prev, modalPage: "creating" }));
-      
-      await walletActions.connectWithPhiWallet();
-      
-      setState(prev => ({ 
-        ...prev, 
-        modalPage: "success",
-        showModal: false 
-      }));
-    } catch (error: any) {
-      setState(prev => ({ 
-        ...prev, 
-        modalPage: "error",
-        errorMessage: error.message || "Failed to create wallet"
-      }));
-    }
+  // 🆕 Handle showing CreateWallet component
+  const handleShowCreateWallet = () => {
+    setState(prev => ({ 
+      ...prev, 
+      showModal: false,
+      showCreateWallet: true
+    }));
   };
 
-  const handleImportWallet = async () => {
-    try {
-      if (!state.importMnemonic.trim()) {
-        setState(prev => ({ 
-          ...prev, 
-          errorMessage: "Please enter a valid mnemonic phrase" 
-        }));
-        return;
-      }
+  // 🆕 Handle showing ImportWallet component
+  const handleShowImportWallet = () => {
+    setState(prev => ({ 
+      ...prev, 
+      showModal: false,
+      showImportWallet: true
+    }));
+  };
 
-      setState(prev => ({ ...prev, modalPage: "importing" }));
-      
-      await walletActions.importPhiWallet(state.importMnemonic.trim());
-      
-      setState(prev => ({ 
-        ...prev, 
-        modalPage: "success",
-        showModal: false,
-        importMnemonic: ""
-      }));
-    } catch (error: any) {
-      setState(prev => ({ 
-        ...prev, 
-        modalPage: "error",
-        errorMessage: error.message || "Failed to import wallet"
-      }));
-    }
+  // 🆕 Handle wallet creation success
+  const handleWalletCreated = (address: string) => {
+    console.log('✅ Wallet created with address:', address);
+    setState(prev => ({ 
+      ...prev, 
+      showCreateWallet: false
+    }));
+  };
+
+  // 🆕 Handle wallet import success
+  const handleWalletImported = (address: string) => {
+    console.log('✅ Wallet imported with address:', address);
+    setState(prev => ({ 
+      ...prev, 
+      showImportWallet: false
+    }));
+  };
+
+  // 🆕 Handle CreateWallet close
+  const handleCloseCreateWallet = () => {
+    setState(prev => ({ 
+      ...prev, 
+      showCreateWallet: false,
+      showModal: true,
+      modalPage: "connect"
+    }));
+  };
+
+  // 🆕 Handle ImportWallet close
+  const handleCloseImportWallet = () => {
+    setState(prev => ({ 
+      ...prev, 
+      showImportWallet: false,
+      showModal: true,
+      modalPage: "connect"
+    }));
   };
 
   const renderModalContent = () => {
@@ -97,131 +107,19 @@ export default function PhiWalletConnect() {
             <div className="space-y-3">
               <IgntButton
                 type="primary"
-                onClick={() => setState(prev => ({ ...prev, modalPage: "create" }))}
+                onClick={handleShowCreateWallet}
                 className="w-full"
               >
                 🆕 Create New Wallet
               </IgntButton>
               <IgntButton
                 type="secondary"
-                onClick={() => setState(prev => ({ ...prev, modalPage: "import" }))}
+                onClick={handleShowImportWallet} // 🆕 Use new handler
                 className="w-full"
               >
                 📥 Import Existing Wallet
               </IgntButton>
             </div>
-          </div>
-        );
-
-      case "create":
-        return (
-          <div className="p-6">
-            <h2 className="text-2xl font-bold mb-4">Create New Wallet</h2>
-            <div className="bg-yellow-50 border border-yellow-200 rounded-lg p-4 mb-6">
-              <h3 className="font-semibold text-yellow-800 mb-2">⚠️ Important Security Notice</h3>
-              <ul className="text-sm text-yellow-700 space-y-1">
-                <li>• Your recovery phrase will be generated automatically</li>
-                <li>• Write it down and store it securely offline</li>
-                <li>• Never share it with anyone</li>
-                <li>• You&apos;ll need it to recover your wallet</li>
-              </ul>
-            </div>
-            <div className="space-y-3">
-              <IgntButton
-                type="primary"
-                onClick={handleCreateWallet}
-                className="w-full"
-              >
-                Create Wallet
-              </IgntButton>
-              <IgntButton
-                type="secondary"
-                onClick={() => setState(prev => ({ ...prev, modalPage: "connect" }))}
-                className="w-full"
-              >
-                Back
-              </IgntButton>
-            </div>
-          </div>
-        );
-
-      case "import":
-        return (
-          <div className="p-6">
-            <h2 className="text-2xl font-bold mb-4">Import Wallet</h2>
-            <div className="space-y-4">
-              <div>
-                <label htmlFor="mnemonic-input" className="block text-sm font-medium mb-2">
-                  Recovery Phrase
-                </label>
-                <textarea
-                  id="mnemonic-input"
-                  className="w-full p-3 border rounded-lg resize-none"
-                  rows={4}
-                  placeholder="Enter your 12 or 24 word recovery phrase..."
-                  value={state.importMnemonic}
-                  onChange={(e) => setState(prev => ({ 
-                    ...prev, 
-                    importMnemonic: e.target.value,
-                    errorMessage: "" // Clear error when typing
-                  }))}
-                />
-                <p className="text-xs text-gray-500 mt-1">
-                  Separate each word with a space
-                </p>
-              </div>
-              
-              {state.errorMessage && (
-                <div className="bg-red-50 border border-red-200 rounded-lg p-3">
-                  <p className="text-red-700 text-sm">{state.errorMessage}</p>
-                </div>
-              )}
-              
-              <div className="space-y-2">
-                <IgntButton
-                  type="primary"
-                  onClick={handleImportWallet}
-                  disabled={!state.importMnemonic.trim()}
-                  className="w-full"
-                >
-                  Import Wallet
-                </IgntButton>
-                <IgntButton
-                  type="secondary"
-                  onClick={() => setState(prev => ({ 
-                    ...prev, 
-                    modalPage: "connect",
-                    importMnemonic: "",
-                    errorMessage: ""
-                  }))}
-                  className="w-full"
-                >
-                  Back
-                </IgntButton>
-              </div>
-            </div>
-          </div>
-        );
-
-      case "creating":
-        return (
-          <div className="text-center p-6">
-            <IgntSpinner size={48} /> 
-            <h2 className="text-2xl font-bold mt-4 mb-2">Creating Wallet...</h2>
-            <p className="text-gray-600">
-              Generating your recovery phrase and connecting to Test Chain...
-            </p>
-          </div>
-        );
-
-      case "importing":
-        return (
-          <div className="text-center p-6">
-            <IgntSpinner size={48} /> 
-            <h2 className="text-2xl font-bold mt-4 mb-2">Importing Wallet...</h2>
-            <p className="text-gray-600">
-              Validating recovery phrase and connecting to Test Chain...
-            </p>
           </div>
         );
 
@@ -257,7 +155,7 @@ export default function PhiWalletConnect() {
   const wallet = walletStore.activeWallet;
 
   return (
-    <div className="phi-wallet-connect">
+    <div className="phi-wallet_connect">
       {!wallet ? (
         <IgntButton
           type="primary"
@@ -277,7 +175,7 @@ export default function PhiWalletConnect() {
                 Φ
               </div>
               <div>
-                <div className="font-medium text-gray-900">{wallet.name}</div>
+                <div className="font-medium text-gray-900">{wallet.name || 'Phi Wallet'}</div>
                 <div className="text-sm text-gray-500">
                   {wallet.accounts[0]?.address.slice(0, 12)}...
                   {wallet.accounts[0]?.address.slice(-8)}
@@ -289,11 +187,22 @@ export default function PhiWalletConnect() {
                 <div className="text-xs text-gray-500">Test Chain</div>
                 <div className="text-sm font-medium text-green-600">Connected</div>
               </div>
+              <IgntButton
+                type="secondary"
+                size="small"
+                onClick={() => {
+                  setState(prev => ({ ...prev, showModal: false }));
+                  // Add disconnect logic here
+                }}
+              >
+                Disconnect
+              </IgntButton>
             </div>
           </div>
         </div>
       )}
 
+      {/* Main modal - simplified for just connect screen */}
       <IgntModal
         visible={state.showModal}
         closeIcon={true}
@@ -304,7 +213,6 @@ export default function PhiWalletConnect() {
           ...prev, 
           showModal: false, 
           modalPage: "connect",
-          importMnemonic: "",
           errorMessage: ""
         }))}
         submit={() => null}
@@ -312,6 +220,22 @@ export default function PhiWalletConnect() {
         body={renderModalContent()}
         footer=""
       />
+
+      {/* 🆕 CreateWallet Component */}
+      {state.showCreateWallet && (
+        <CreateWallet
+          onClose={handleCloseCreateWallet}
+          onWalletCreated={handleWalletCreated}
+        />
+      )}
+
+      {/* 🆕 ImportWallet Component */}
+      {state.showImportWallet && (
+        <ImportWallet
+          onClose={handleCloseImportWallet}
+          onWalletImported={handleWalletImported}
+        />
+      )}
     </div>
   );
 }

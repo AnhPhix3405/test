@@ -1,13 +1,13 @@
 import { useClient } from "../hooks/useClient";
-import { useDispatchWalletContext } from "../def-hooks/walletContext";
+import { useWalletContext } from "../def-hooks/walletContext";
 
 export default function () {
   const client = useClient();
-  const walletStore = useDispatchWalletContext();
+  const { setActiveWallet } = useWalletContext();
 
   const connectToKeplr = async (onSuccessCb: () => void, onErrorCb: () => void) => {
     try {
-      walletStore.connectWithKeplr();
+      setActiveWallet();
       onSuccessCb();
     } catch (e) {
       console.error(e);

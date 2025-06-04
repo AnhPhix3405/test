@@ -2,6 +2,7 @@ import { useState } from "react";
 import { useClient } from "./useClient";
 import { createNewWallet, importWalletFromMnemonic, validateMnemonic } from "../wallet";
 import { coin, GasPrice } from "@cosmjs/stargate";
+import { DirectSecp256k1HdWallet } from "@cosmjs/proto-signing";
 import { BLOCKCHAIN_CONFIG } from "../config/blockchain";
 
 export const usePhiWallet = () => {
@@ -37,32 +38,32 @@ export const usePhiWallet = () => {
   };
 
   const importWallet = async (mnemonic: string) => {
+    console.log("🔄 Importing wallet...");
+    
     try {
-      setIsConnecting(true);
-      setError(null);
-      
-      if (!validateMnemonic(mnemonic)) {
-        throw new Error("Invalid mnemonic phrase. Must be 12 or 24 words.");
+      // 🆕 Thêm validation cho mnemonic
+      if (!mnemonic || typeof mnemonic !== 'string') {
+        throw new Error('Invalid mnemonic: mnemonic is required');
       }
+
+      validateMnemonic(mnemonic);
       
-      console.log("📥 Importing Phi wallet...");
-      const walletData = await importWalletFromMnemonic(mnemonic);
+      const wallet = await DirectSecp256k1HdWallet.fromMnemonic(
+        mnemonic,
+        { prefix: BLOCKCHAIN_CONFIG.addressPrefix }
+      );
+
+      const [firstAccount] = await wallet.getAccounts();
       
-      console.log("✅ Wallet imported:", walletData.address);
+      // 🔄 Sử dụng client.connectWithWallet thay vì gán trực tiếp
+      await client.connectWithWallet(wallet);
+
+      console.log("✅ Wallet imported successfully:", firstAccount.address);
+      return firstAccount.address;
       
-      // Connect to Test Chain
-      await client.connectWithWallet(walletData.wallet);
-      
-      return {
-        address: walletData.address,
-        mnemonic: walletData.mnemonic,
-      };
-    } catch (err: any) {
-      console.error("❌ Failed to import wallet:", err);
-      setError(err.message);
-      throw err;
-    } finally {
-      setIsConnecting(false);
+    } catch (error: any) {
+      console.error("❌ Failed to import wallet:", error);
+      throw error;
     }
   };
 
@@ -70,38 +71,139 @@ const getBalance = async (address: string) => {
   try {
     console.log("💰 Getting balance for:", address);
     
-    // 🆕 Enhanced client check with retry logic
-    if (!client.client) {
-      console.warn("⚠️ Client not connected, attempting to reconnect...");
+    // 🔄 Method 1: Try direct REST API call first (không cần wallet connection)
+    try {
+      const restEndpoint = `${BLOCKCHAIN_CONFIG.restEndpoint}/cosmos/bank/v1beta1/balances/${address}`;
+      console.log("🔄 Trying direct REST call:", restEndpoint);
       
-      // Try to reconnect if we have active wallet
-      const activeWalletData = localStorage.getItem('activeWallet');
-      if (activeWalletData) {
-        try {
-          const wallet = JSON.parse(activeWalletData);
-          await importWallet(wallet.mnemonic);
-        } catch (reconnectError) {
-          console.error("❌ Failed to reconnect:", reconnectError);
+      const response = await fetch(restEndpoint);
+      if (response.ok) {
+        const data = await response.json();
+        console.log("📊 REST balance response:", data);
+        
+        const balances = data.balances || [];
+        const targetBalance = balances.find(
+          (bal: any) => bal.denom === BLOCKCHAIN_CONFIG.currency.coinMinimalDenom
+        );
+
+        if (targetBalance) {
+          const amount = targetBalance.amount;
+          const readable = `${(parseInt(amount) / Math.pow(10, BLOCKCHAIN_CONFIG.currency.coinDecimals)).toFixed(6)} ${BLOCKCHAIN_CONFIG.currency.coinDenom}`;
+          
+          console.log("💎 Direct REST balance:", { amount, readable });
+          return {
+            amount: amount,
+            denom: targetBalance.denom,
+            readable: readable,
+          };
+        } else {
+          // No balance found for this denom = zero balance
+          console.log("💎 No balance found, returning zero");
+          return {
+            amount: "0",
+            denom: BLOCKCHAIN_CONFIG.currency.coinMinimalDenom,
+            readable: `0 ${BLOCKCHAIN_CONFIG.currency.coinDenom}`,
+          };
         }
       }
-      
-      // If still no client, throw error
-      if (!client.client) {
-        throw new Error("Wallet not connected to blockchain. Please connect your wallet first.");
+    } catch (restError) {
+      console.warn("⚠️ Direct REST balance failed:", restError);
+    }
+    
+    // 🔄 Method 2: Try with connected client if available
+    if (client.client) {
+      try {
+        const balance = await client.client.getBalance(
+          address, 
+          BLOCKCHAIN_CONFIG.currency.coinMinimalDenom
+        );
+        
+        console.log("💎 Connected client balance:", balance);
+        return {
+          amount: balance.amount,
+          denom: balance.denom,
+          readable: `${(parseInt(balance.amount) / Math.pow(10, BLOCKCHAIN_CONFIG.currency.coinDecimals)).toFixed(6)} ${BLOCKCHAIN_CONFIG.currency.coinDenom}`,
+        };
+      } catch (clientError) {
+        console.warn("⚠️ Connected client balance failed:", clientError);
       }
     }
     
-    const balance = await client.getBalance(address);
+    // 🔄 Method 3: Try alternative REST endpoints
+    const altEndpoints = [
+      `${BLOCKCHAIN_CONFIG.restEndpoint}/bank/balances/${address}`,
+      `${BLOCKCHAIN_CONFIG.restEndpoint}/cosmos/bank/v1beta1/balances/${address}/${BLOCKCHAIN_CONFIG.currency.coinMinimalDenom}`,
+    ];
+
+    for (const endpoint of altEndpoints) {
+      try {
+        console.log("🔄 Trying alternative endpoint:", endpoint);
+        const response = await fetch(endpoint);
+        if (response.ok) {
+          const data = await response.json();
+          console.log("📊 Alternative endpoint response:", data);
+          
+          // Handle different response formats
+          if (data.balance) {
+            // Single balance response
+            const balance = data.balance;
+            const readable = `${(parseInt(balance.amount) / Math.pow(10, BLOCKCHAIN_CONFIG.currency.coinDecimals)).toFixed(6)} ${BLOCKCHAIN_CONFIG.currency.coinDenom}`;
+            return {
+              amount: balance.amount,
+              denom: balance.denom,
+              readable: readable,
+            };
+          } else if (data.balances) {
+            // Multiple balances response
+            const targetBalance = data.balances.find(
+              (bal: any) => bal.denom === BLOCKCHAIN_CONFIG.currency.coinMinimalDenom
+            );
+            if (targetBalance) {
+              const readable = `${(parseInt(targetBalance.amount) / Math.pow(10, BLOCKCHAIN_CONFIG.currency.coinDecimals)).toFixed(6)} ${BLOCKCHAIN_CONFIG.currency.coinDenom}`;
+              return {
+                amount: targetBalance.amount,
+                denom: targetBalance.denom,
+                readable: readable,
+              };
+            }
+          }
+        }
+      } catch (error) {
+        console.warn("⚠️ Alternative endpoint failed:", endpoint, error);
+      }
+    }
     
-    // Convert to readable format
-    const readableBalance = {
-      amount: balance.amount,
-      denom: balance.denom,
-      readable: `${(parseInt(balance.amount) / Math.pow(10, BLOCKCHAIN_CONFIG.currency.coinDecimals)).toFixed(6)} ${BLOCKCHAIN_CONFIG.currency.coinDenom}`,
+    // 🔄 Method 4: Try RPC query as last resort
+    try {
+      console.log("🔄 Trying RPC balance query...");
+      const rpcEndpoint = `${BLOCKCHAIN_CONFIG.rpcEndpoint}/abci_query`;
+      
+      // Create a simple query (simplified, not full protobuf)
+      const queryPath = "/cosmos.bank.v1beta1.Query/Balance";
+      const queryData = btoa(JSON.stringify({ address, denom: BLOCKCHAIN_CONFIG.currency.coinMinimalDenom }));
+      
+      const rpcUrl = `${rpcEndpoint}?path="${encodeURIComponent(queryPath)}"&data="${queryData}"`;
+      
+      const response = await fetch(rpcUrl);
+      if (response.ok) {
+        const data = await response.json();
+        console.log("📊 RPC balance response:", data);
+        
+        // RPC responses need decoding, for now return zero as fallback
+        console.log("⚠️ RPC balance decoding not implemented, using zero");
+      }
+    } catch (rpcError) {
+      console.warn("⚠️ RPC balance query failed:", rpcError);
+    }
+    
+    // Final fallback - return zero balance
+    console.log("💎 All methods failed, returning zero balance");
+    return {
+      amount: "0",
+      denom: BLOCKCHAIN_CONFIG.currency.coinMinimalDenom,
+      readable: `0 ${BLOCKCHAIN_CONFIG.currency.coinDenom}`,
     };
     
-    console.log("💎 Balance:", readableBalance);
-    return readableBalance;
   } catch (error) {
     console.error("❌ Failed to get balance:", error);
     return { 
@@ -167,89 +269,76 @@ const getBalance = async (address: string) => {
   }
 };
 
-const getTransactionHistory = async (address: string, limit = 10) => {
+const getTransactionHistory = async (address: string, limit: number = 10) => {
+  console.log("📜 Getting transaction history for:", address, "limit:", limit);
+  setError(null);
+
   try {
-    console.log("📜 Getting transaction history for:", address);
+    // 🆕 Chỉ sử dụng RPC vì nó hoạt động tốt
+    console.log("🔄 Using RPC method only...");
     
-    // Method 1: Try REST API first
-    try {
-      const txs = await getTransactionHistoryREST(address, limit);
-      if (txs.length > 0) {
-        console.log("✅ Got transactions from REST API");
-        return txs;
-      }
-    } catch (error) {
-      console.warn("⚠️ REST API failed:", error);
+    const rpcData = await getTransactionHistoryRPC(address, limit);
+    if (rpcData && rpcData.length > 0) {
+      console.log("✅ Got transactions from RPC");
+      return rpcData;
     }
     
-    // Method 2: Try RPC with different query format
-    try {
-      const txs = await getTransactionHistoryRPC(address, limit);
-      if (txs.length > 0) {
-        console.log("✅ Got transactions from RPC");
-        return txs;
-      }
-    } catch (error) {
-      console.warn("⚠️ RPC failed:", error);
-    }
-    
-    // Method 3: Try simple block query
-    try {
-      const txs = await getTransactionHistoryBlocks(address, limit);
-      if (txs.length > 0) {
-        console.log("✅ Got transactions from block scanning");
-        return txs;
-      }
-    } catch (error) {
-      console.warn("⚠️ Block scanning failed:", error);
-    }
-    
-    // Method 4: Return mock data for development
-    console.log("ℹ️ No real transactions found, returning mock data");
-    // console.log("🔧 Blockchain config:", BLOCKCHAIN_CONFIG.currency);
-    return getMockTransactions(address);
-    
-  } catch (error) {
-    console.error("❌ All transaction methods failed:", error);
-    return getMockTransactions(address);
+    console.log("ℹ️ No transaction history found");
+    return [];
+
+  } catch (error: any) {
+    console.error("❌ Failed to get transaction history:", error);
+    setError(error.message);
+    return [];
   }
 };
 
+
 // REST API method
-const getTransactionHistoryREST = async (address: string, limit: number) => {
-  const restEndpoint = BLOCKCHAIN_CONFIG.restEndpoint;
-  
-  // Try different REST endpoints
-  const endpoints = [
-    `${restEndpoint}/cosmos/tx/v1beta1/txs?events=transfer.recipient%3D%27${address}%27&pagination.limit=${limit}`,
-    `${restEndpoint}/cosmos/tx/v1beta1/txs?events=transfer.sender%3D%27${address}%27&pagination.limit=${limit}`,
-    `${restEndpoint}/txs?transfer.recipient=${address}&limit=${limit}`,
-    `${restEndpoint}/txs?transfer.sender=${address}&limit=${limit}`,
+const getTransactionHistoryREST = async (address: string, limit: number = 10) => {
+  const restEndpoints = [
+    // Modern Cosmos SDK endpoints (v0.45+) với limit
+    `${BLOCKCHAIN_CONFIG.restEndpoint}/cosmos/tx/v1beta1/txs?events=transfer.recipient%3D%27${address}%27&pagination.limit=${limit}`,
+    `${BLOCKCHAIN_CONFIG.restEndpoint}/cosmos/tx/v1beta1/txs?events=transfer.sender%3D%27${address}%27&pagination.limit=${limit}`,
+    
+    // Legacy endpoints - skip these if they return 501
+    // `${BLOCKCHAIN_CONFIG.restEndpoint}/txs?transfer.recipient=${address}&limit=${limit}`,
+    // `${BLOCKCHAIN_CONFIG.restEndpoint}/txs?transfer.sender=${address}&limit=${limit}`,
   ];
-  
-  let allTxs: any[] = [];
-  
-  for (const endpoint of endpoints) {
+
+  for (const endpoint of restEndpoints) {
     try {
       console.log("🔍 Trying REST endpoint:", endpoint);
       const response = await fetch(endpoint);
       
+      // 🆕 Skip 501 Not Implemented errors
+      if (response.status === 501) {
+        console.log("⚠️ Endpoint not implemented, skipping:", endpoint);
+        continue;
+      }
+      
+      // 🆕 Skip 500 Internal Server Error
+      if (response.status === 500) {
+        console.log("⚠️ Server error, skipping:", endpoint);
+        continue;
+      }
+      
       if (response.ok) {
         const data = await response.json();
-        console.log("📡 REST Response:", data);
-        
-        if (data.txs && Array.isArray(data.txs)) {
-          allTxs = [...allTxs, ...data.txs];
-        } else if (data.tx_responses && Array.isArray(data.tx_responses)) {
-          allTxs = [...allTxs, ...data.tx_responses];
+        // 🆕 Process and format transactions with limit
+        if (data.txs || data.tx_responses) {
+          const txs = data.txs || data.tx_responses || [];
+          return formatTransactions(txs, address, limit);
         }
+        return [];
       }
     } catch (error) {
       console.warn("⚠️ REST endpoint failed:", endpoint, error);
+      continue;
     }
   }
   
-  return formatTransactions(allTxs, address, limit);
+  return []; // All REST endpoints failed
 };
 
 // RPC method with simpler queries

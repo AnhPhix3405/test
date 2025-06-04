@@ -36,7 +36,11 @@ export default function TransactionHistory() {
     
     try {
       const txs = await phiWallet.getTransactionHistory(activeWallet.accounts[0].address, limit);
-      setTransactions(txs);
+      const typedTxs = txs.map((tx: any) => ({
+        ...tx,
+        type: (tx.type === "sent" || tx.type === "received") ? tx.type : "unknown" as const
+      }));
+      setTransactions(typedTxs);
     } catch (err: any) {
       setError(err.message || "Failed to load transactions");
       console.error("Failed to load transactions:", err);
@@ -68,6 +72,15 @@ export default function TransactionHistory() {
       default: return "text-gray-600";
     }
   };
+
+  // 🔧 Fix duplicate key issue
+  const uniqueTransactions = transactions.reduce((acc, tx) => {
+    const key = `${tx.hash}-${tx.timestamp || Date.now()}`;
+    if (!acc.some(item => item.hash === tx.hash)) {
+      acc.push({ ...tx, uniqueKey: key });
+    }
+    return acc;
+  }, [] as Array<any>);
 
   if (!activeWallet) {
     return (
@@ -115,7 +128,7 @@ export default function TransactionHistory() {
         <div className="text-center py-8">
           <div className="animate-pulse text-gray-500">Loading transactions...</div>
         </div>
-      ) : transactions.length === 0 ? (
+      ) : uniqueTransactions.length === 0 ? (
         <div className="text-center py-8 text-gray-500">
           <div className="text-4xl mb-2">📭</div>
           <div>No transactions found</div>
@@ -125,9 +138,9 @@ export default function TransactionHistory() {
         </div>
       ) : (
         <div className="space-y-3">
-          {transactions.map((tx) => (
+          {uniqueTransactions.map((tx, index) => (
             <div 
-              key={tx.hash} 
+              key={`${tx.hash}-${index}`} 
               className={`border rounded-lg p-4 hover:bg-gray-50 transition-colors ${
                 !tx.success ? 'border-red-200 bg-red-50' : ''
               }`}

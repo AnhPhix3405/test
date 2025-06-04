@@ -1,215 +1,269 @@
-import { createContext, ReactNode, useContext, useState } from "react";
-import { useClient } from "../hooks/useClient";
-import { usePhiWallet } from "../hooks/usePhiWallet";
-import CryptoJS from "crypto-js";
-import type { Wallet, Nullable, EncodedWallet } from "../utils/interfaces";
-import { BLOCKCHAIN_CONFIG } from "../config/blockchain";
+import React, { createContext, useContext, useState, useReducer, ReactNode } from 'react';
 
-interface Props {
-  children?: ReactNode;
+// Types
+interface Wallet {  // 🔄 Bỏ "export" ở đây
+  id: string;
+  name: string;
+  mnemonic?: string; // Legacy wallets (optional)
+  encryptedMnemonic?: string; // 🆕 New encrypted wallets
+  accounts: Array<{ address: string }>;
+  isActive: boolean;
+  createdAt: string;
+  spendingPassword?: string; // Should not be stored, but for type safety
 }
 
-const initState = {
-  wallets:
-    (JSON.parse(window.localStorage.getItem("wallets") ?? "null") as Array<EncodedWallet>) ||
-    ([] as Array<EncodedWallet>),
-  activeWallet: null as Nullable<Wallet>,
-  activeClient: null as Nullable<ReturnType<typeof useClient>>,
+// 🆕 Add dispatch actions
+type WalletAction = 
+  | { type: 'SET_ACTIVE_WALLET'; payload: Wallet | null }
+  | { type: 'ADD_WALLET'; payload: Wallet }
+  | { type: 'REMOVE_WALLET'; payload: string }
+  | { type: 'UPDATE_WALLET'; payload: { id: string; updates: Partial<Wallet> } }
+  | { type: 'DISCONNECT_WALLET' }; // 🆕 Add disconnect action
+
+// Reducer function
+const walletReducer = (state: { wallets: Wallet[]; activeWallet: Wallet | null }, action: WalletAction) => {
+  switch (action.type) {
+    case 'SET_ACTIVE_WALLET':
+      return { ...state, activeWallet: action.payload };
+    case 'ADD_WALLET':
+      return { 
+        ...state, 
+        wallets: [...state.wallets, action.payload],
+        activeWallet: state.wallets.length === 0 ? action.payload : state.activeWallet
+      };
+    case 'REMOVE_WALLET':
+      const filteredWallets = state.wallets.filter(w => w.id !== action.payload);
+      return {
+        ...state,
+        wallets: filteredWallets,
+        activeWallet: state.activeWallet?.id === action.payload ? null : state.activeWallet
+      };
+    case 'UPDATE_WALLET':
+      return {
+        ...state,
+        wallets: state.wallets.map(w => 
+          w.id === action.payload.id ? { ...w, ...action.payload.updates } : w
+        ),
+        activeWallet: state.activeWallet?.id === action.payload.id 
+          ? { ...state.activeWallet, ...action.payload.updates }
+          : state.activeWallet
+      };
+    // 🆕 Add disconnect case
+    case 'DISCONNECT_WALLET':
+      return {
+        ...state,
+        activeWallet: null
+      };
+    default:
+      return state;
+  }
 };
 
-type WalletDispatch = {
-  // Legacy Keplr support
-  connectWithKeplr: () => Promise<void>;
-  
-  // New Phi Wallet methods
-  connectWithPhiWallet: () => Promise<void>;
+interface WalletContextType {
+  wallets: Wallet[];
+  activeWallet: Wallet | null;
+  setActiveWallet: (wallet: Wallet | null) => void;
+  addWallet: (wallet: Wallet) => void;
+  removeWallet: (walletId: string) => void;
+  updateWallet: (walletId: string, updates: Partial<Wallet>) => void;
+}
+
+// 🆕 Enhanced Dispatch Context Type
+interface WalletDispatchContextType {
+  dispatch: React.Dispatch<WalletAction>;
+  // 🆕 Add convenience methods
+  disconnect: () => void;
+  signOut: () => void; // Alias for disconnect
   importPhiWallet: (mnemonic: string) => Promise<void>;
-  
-  // Common methods
-  signOut: () => void;
-};
+  connectWithPhiWallet: (walletData: any) => Promise<void>;
+}
 
-const WalletContext = createContext(initState);
-const WalletDispatchContext = createContext({} as WalletDispatch);
+// Create Contexts
+const WalletContext = createContext<WalletContextType | undefined>(undefined);
+const WalletDispatchContext = createContext<WalletDispatchContextType | undefined>(undefined);
 
-export const useWalletContext = () => useContext(WalletContext);
-export const useDispatchWalletContext = () => useContext(WalletDispatchContext);
+// Provider Component
+export const WalletProvider: React.FC<{ children: ReactNode }> = ({ children }) => {
+  const [state, dispatch] = useReducer(walletReducer, {
+    wallets: [],
+    activeWallet: null
+  });
 
-export default function WalletProvider({ children }: Props) {
-  const [wallets, setWallets] = useState(initState.wallets);
-  const [activeWallet, setActiveWallet] = useState(initState.activeWallet);
-  const [activeClient, setActiveClient] = useState(initState.activeClient);
-  
-  const client = useClient();
-  const phiWallet = usePhiWallet();
-
-  // 🆕 NEW: Connect với Phi Wallet (Create new)
-  const connectWithPhiWallet = async () => {
-    try {
-      console.log("🔗 Creating new Phi wallet...");
-      
-      const walletData = await phiWallet.createWallet();
-      
-      const wallet: Wallet = {
-        name: BLOCKCHAIN_CONFIG.walletName, // "Phi Wallet"
-        mnemonic: walletData.mnemonic,
-        HDpath: null,
-        password: null,
-        prefix: BLOCKCHAIN_CONFIG.addressPrefix, // "phi"
-        pathIncrement: null,
-        accounts: [{ address: walletData.address, pathIncrement: null }],
-      };
-
-      setActiveWallet(wallet);
-      setActiveClient(client);
-      window.localStorage.setItem("lastWallet", wallet.name);
-
-      // Save wallet to localStorage
-      const newWalletEntry = {
-        name: `${wallet.name} (${new Date().toLocaleDateString()})`,
-        wallet: JSON.stringify(wallet),
-      };
-
-      const updatedWallets = [...wallets, newWalletEntry];
-      setWallets(updatedWallets);
-      window.localStorage.setItem("wallets", JSON.stringify(updatedWallets));
-      
-      console.log("✅ Phi wallet connected:", walletData.address);
-      console.log("🔑 Mnemonic saved for wallet:", wallet.name);
-    } catch (e) {
-      console.error("❌ Phi wallet connection failed:", e);
-      throw e;
+  // Helper functions
+  const setActiveWallet = (wallet: Wallet | null) => {
+    dispatch({ type: 'SET_ACTIVE_WALLET', payload: wallet });
+    
+    if (wallet) {
+      localStorage.setItem('activeWallet', JSON.stringify(wallet));
+    } else {
+      localStorage.removeItem('activeWallet');
     }
   };
 
-  // 🆕 NEW: Import Phi Wallet từ mnemonic
+  const addWallet = (wallet: Wallet) => {
+    dispatch({ type: 'ADD_WALLET', payload: wallet });
+    
+    // Update localStorage
+    const updatedWallets = [...state.wallets, wallet];
+    localStorage.setItem('allWallets', JSON.stringify(updatedWallets));
+  };
+
+  const removeWallet = (walletId: string) => {
+    dispatch({ type: 'REMOVE_WALLET', payload: walletId });
+    
+    // Update localStorage
+    const updatedWallets = state.wallets.filter(w => w.id !== walletId);
+    localStorage.setItem('allWallets', JSON.stringify(updatedWallets));
+  };
+
+  const updateWallet = (walletId: string, updates: Partial<Wallet>) => {
+    dispatch({ type: 'UPDATE_WALLET', payload: { id: walletId, updates } });
+    
+    // Update localStorage
+    const updatedWallets = state.wallets.map(w => 
+      w.id === walletId ? { ...w, ...updates } : w
+    );
+    localStorage.setItem('allWallets', JSON.stringify(updatedWallets));
+    
+    // Update active wallet in localStorage if it's the one being updated
+    if (state.activeWallet?.id === walletId) {
+      const updatedActiveWallet = { ...state.activeWallet, ...updates };
+      localStorage.setItem('activeWallet', JSON.stringify(updatedActiveWallet));
+    }
+  };
+
+  // 🆕 Disconnect/SignOut function
+  const disconnect = () => {
+    dispatch({ type: 'DISCONNECT_WALLET' });
+    localStorage.removeItem('activeWallet');
+    localStorage.removeItem('allWallets');
+    console.log('✅ Wallet disconnected');
+  };
+
+  // 🆕 SignOut alias
+  const signOut = disconnect;
+
+  // 🆕 Import wallet function
   const importPhiWallet = async (mnemonic: string) => {
     try {
-      console.log("📥 Importing Phi wallet...");
+      // Import wallet logic here
+      // This should be implemented based on your usePhiWallet hook
+      console.log('Importing wallet with mnemonic...');
       
-      const walletData = await phiWallet.importWallet(mnemonic);
-      
-      const wallet: Wallet = {
-        name: `${BLOCKCHAIN_CONFIG.walletName} (Imported)`,
-        mnemonic: walletData.mnemonic,
-        HDpath: null,
-        password: null,
-        prefix: BLOCKCHAIN_CONFIG.addressPrefix,
-        pathIncrement: null,
-        accounts: [{ address: walletData.address, pathIncrement: null }],
+      // For now, create a mock wallet
+      const importedWallet: Wallet = {
+        id: Date.now().toString(),
+        name: `Imported Wallet ${new Date().toLocaleDateString()}`,
+        mnemonic: mnemonic,
+        accounts: [{ address: 'imported-address-placeholder' }],
+        isActive: true,
+        createdAt: new Date().toISOString(),
       };
-
-      setActiveWallet(wallet);
-      setActiveClient(client);
-      window.localStorage.setItem("lastWallet", wallet.name);
-
-      // Save imported wallet
-      const newWalletEntry = {
-        name: `${wallet.name} (${new Date().toLocaleDateString()})`,
-        wallet: JSON.stringify(wallet),
-      };
-
-      const updatedWallets = [...wallets, newWalletEntry];
-      setWallets(updatedWallets);
-      window.localStorage.setItem("wallets", JSON.stringify(updatedWallets));
       
-      console.log("✅ Phi wallet imported:", walletData.address);
-    } catch (e) {
-      console.error("❌ Phi wallet import failed:", e);
-      throw e;
+      addWallet(importedWallet);
+      setActiveWallet(importedWallet);
+      
+    } catch (error) {
+      console.error('Failed to import wallet:', error);
+      throw error;
     }
   };
 
-  // 🔄 UPDATED: Legacy Keplr support (deprecated)
-  const connectWithKeplr = async () => {
+  // 🆕 Connect with phi wallet function
+  const connectWithPhiWallet = async (walletData: any) => {
     try {
-      console.log("⚠️ Keplr integration is deprecated for Test Chain");
-      console.log("💡 Please use Phi Wallet instead");
-      
-      // Still allow Keplr for compatibility, but warn user
-      console.log("🔗 Starting legacy Keplr connection...");
-
-      const wallet: Wallet = {
-        name: "Keplr Integration (Legacy)",
-        mnemonic: null,
-        HDpath: null,
-        password: null,
-        prefix: BLOCKCHAIN_CONFIG.addressPrefix,
-        pathIncrement: null,
-        accounts: [],
+      const newWallet: Wallet = {
+        id: Date.now().toString(),
+        name: walletData.name || 'Phi Wallet',
+        mnemonic: walletData.mnemonic,
+        spendingPassword: walletData.spendingPassword,
+        accounts: [{ address: walletData.address }],
+        isActive: true,
+        createdAt: new Date().toISOString(),
       };
+      
+      addWallet(newWallet);
+      setActiveWallet(newWallet);
+      
+    } catch (error) {
+      console.error('Failed to connect wallet:', error);
+      throw error;
+    }
+  };
 
-      // Check Keplr availability
-      if (!(window as any).keplr) {
-        throw new Error("Keplr extension not found. Please use Phi Wallet instead.");
+  // Load from localStorage on mount
+  React.useEffect(() => {
+    try {
+      const savedActiveWallet = localStorage.getItem('activeWallet');
+      if (savedActiveWallet) {
+        const wallet = JSON.parse(savedActiveWallet);
+        dispatch({ type: 'SET_ACTIVE_WALLET', payload: wallet });
       }
 
-      console.log("🔌 Calling client.useKeplr()...");
-      await client.useKeplr();
-
-      console.log("📋 Getting accounts...");
-      const [account] = await client.signer!.getAccounts();
-      wallet.accounts.push({ address: account.address, pathIncrement: null });
-
-      console.log("✅ Keplr connected (legacy mode):", account.address);
-
-      setActiveWallet(wallet);
-      setActiveClient(client);
-      window.localStorage.setItem("lastWallet", wallet.name);
-
-      // Save wallet
-      const newWalletEntry = {
-        name: wallet.name,
-        wallet: JSON.stringify(wallet),
-      };
-
-      const updatedWallets = [...wallets, newWalletEntry];
-      setWallets(updatedWallets);
-      window.localStorage.setItem("wallets", JSON.stringify(updatedWallets));
-
-    } catch (e) {
-      console.error("❌ Keplr connection failed:", e);
-      throw e;
+      const savedWallets = localStorage.getItem('allWallets');
+      if (savedWallets) {
+        const allWallets = JSON.parse(savedWallets);
+        allWallets.forEach((wallet: Wallet) => {
+          dispatch({ type: 'ADD_WALLET', payload: wallet });
+        });
+      }
+    } catch (error) {
+      console.error('Failed to load wallets from localStorage:', error);
     }
+  }, []);
+
+  const contextValue: WalletContextType = {
+    wallets: state.wallets,
+    activeWallet: state.activeWallet,
+    setActiveWallet,
+    addWallet,
+    removeWallet,
+    updateWallet,
   };
 
-  // 🧹 UPDATED: Enhanced signOut
-  const signOut = () => {
-    console.log("🚪 Signing out from Test Chain...");
-    
-    // Disconnect from blockchain
-    if (client && client.removeSigner) {
-      client.removeSigner();
-    }
-
-    // Disconnect from Phi Wallet
-    if (phiWallet && phiWallet.disconnect) {
-      phiWallet.disconnect();
-    }
-    
-    // Clear state
-    setActiveClient(null);
-    setActiveWallet(null);
-    window.localStorage.removeItem("lastWallet");
-    
-    console.log("✅ Successfully signed out");
+  const dispatchContextValue: WalletDispatchContextType = {
+    dispatch,
+    disconnect, // 🆕 Add disconnect
+    signOut,    // 🆕 Add signOut alias
+    importPhiWallet, // 🆕 Add import function
+    connectWithPhiWallet, // 🆕 Add connect function
   };
 
   return (
-    <WalletContext.Provider value={{ wallets, activeWallet, activeClient }}>
-      <WalletDispatchContext.Provider value={{ 
-        // Legacy
-        connectWithKeplr,
-        
-        // New Phi Wallet methods
-        connectWithPhiWallet,
-        importPhiWallet,
-        
-        // Common
-        signOut 
-      }}>
+    <WalletContext.Provider value={contextValue}>
+      <WalletDispatchContext.Provider value={dispatchContextValue}>
         {children}
       </WalletDispatchContext.Provider>
     </WalletContext.Provider>
   );
-}
+};
+
+// Hooks
+export const useWalletContext = () => {
+  const context = useContext(WalletContext);
+  if (!context) {
+    throw new Error('useWalletContext must be used within a WalletProvider');
+  }
+  return context;
+};
+
+export const useDispatchWalletContext = () => {
+  const context = useContext(WalletDispatchContext);
+  if (!context) {
+    throw new Error('useDispatchWalletContext must be used within a WalletProvider');
+  }
+  return context;
+};
+
+// 🆕 Chỉ export type một lần duy nhất ở cuối file
+export type { 
+  WalletContextType, 
+  WalletAction,
+  WalletDispatchContextType 
+};
+
+// 🆕 Export Wallet interface ở đây
+export type { Wallet };
+
+// Default export
+export default WalletProvider;
